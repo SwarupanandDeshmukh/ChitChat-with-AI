@@ -27,7 +27,7 @@ What makes this project unique is that the **AI can generate a basic Express.js 
 - Node.js + Express.js  
 - MongoDB (for storing chat history & user data)  
 - Socket.io (real-time communication)  
-- AI API integration (OpenAI / other LLM API)  
+- AI API integration.
 
 ---
 
