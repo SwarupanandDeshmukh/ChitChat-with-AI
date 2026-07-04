@@ -65,6 +65,11 @@ io.on('connection', socket => {
         return;
     }
     socket.join(roomId);
+    
+    // Join a unique room for this user to receive personal terminal output
+    if (socket.user && socket.user.userId) {
+        socket.join(socket.user.userId.toString());
+    }
 
     // Send chat history from Redis to the newly connected user
     const chatKey = `chat:${roomId}`;
@@ -169,6 +174,24 @@ io.on('connection', socket => {
         }
     });
 
+    socket.on('terminal:input', async data => {
+        // Find session and write to Docker stdin
+        if (data.sessionId && data.input) {
+            // Lazy import to avoid circular dependency
+            const { default: TerminalSessionManager } = await import('./Services/Execution/TerminalSessionManager.js');
+            const session = TerminalSessionManager.GetSession(data.sessionId);
+            
+            // Verify ownership and stream existence
+            if (session && session.userId.toString() === socket.user.userId.toString() && session.stream) {
+                try {
+                    session.stream.write(data.input);
+                } catch (err) {
+                    console.error('Error writing to terminal stream:', err);
+                }
+            }
+        }
+    });
+
     socket.on('event', data => { /* … */ });
     socket.on('disconnect', () => {
         console.log('user Disconnected');
@@ -179,3 +202,5 @@ io.on('connection', socket => {
 server.listen(port, () => {
     console.log(`The server is running at ${port}`)
 })
+
+export { io, server };

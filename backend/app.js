@@ -5,6 +5,7 @@ import cookieParser from 'cookie-parser';
 import cors from 'cors'
 import RoomRouter from './Routes/RoomRoute.js';
 import AIRouter from './Routes/AIRoute.js';
+import ExecutionRouter from './Routes/execution.routes.js';
 
 const app = express();
 
@@ -17,6 +18,7 @@ app.use(cookieParser());
 app.use('/users',UserRouter)
 app.use('/room',RoomRouter)
 app.use('/ai',AIRouter);
+app.use('/api/execution', ExecutionRouter);
 
 
 app.get("/",(req,res) => {

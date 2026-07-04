@@ -4,6 +4,9 @@ import axiosInstance from '../config/axios';
 import { initializeSocket, sendMessage, recieveMessage } from '../config/socket';
 import { UserContext } from '../context/user.context';
 import Editor from '@monaco-editor/react';
+import { Terminal } from 'xterm';
+import { FitAddon } from 'xterm-addon-fit';
+import 'xterm/css/xterm.css';
 
 const LANGUAGES = [
   { label: 'JavaScript', value: 'javascript' },
@@ -42,6 +45,21 @@ const Room = () => {
   const [editorLanguage, setEditorLanguage] = useState('javascript');
   const [editorCode, setEditorCode] = useState('// Start coding here...\n');
   const [kickedFromRoom, setKickedFromRoom] = useState(null);
+
+  // Execution State
+  const [isExecuting, setIsExecuting] = useState(false);
+  const [compilationError, setCompilationError] = useState(null);
+  const [terminalActive, setTerminalActive] = useState(false);
+  const [currentSessionId, setCurrentSessionId] = useState(null);
+  const currentSessionIdRef = useRef(null);
+  const terminalContainerRef = useRef(null);
+  const xtermRef = useRef(null);
+  const fitAddonRef = useRef(null);
+
+  // Update session ref whenever it changes
+  useEffect(() => {
+    currentSessionIdRef.current = currentSessionId;
+  }, [currentSessionId]);
 
   const isOwner = room?.createdBy?.toString() === (user?._id || user?.userId)?.toString();
 
@@ -124,6 +142,35 @@ const Room = () => {
       }
     });
 
+    recieveMessage('execution:start', data => {
+      setIsExecuting(true);
+      setCompilationError(null);
+    });
+
+    recieveMessage('execution:compiled', data => {
+      setTerminalActive(true);
+    });
+
+    recieveMessage('execution:error', data => {
+      setIsExecuting(false);
+      setCompilationError(data.error || data.message || "An error occurred during execution.");
+    });
+
+    recieveMessage('execution:finished', data => {
+      setIsExecuting(false);
+    });
+
+    recieveMessage('terminal:output', data => {
+      setTerminalActive(true);
+      if (xtermRef.current) {
+         xtermRef.current.write(data.output);
+      } else {
+         setTimeout(() => {
+           if (xtermRef.current) xtermRef.current.write(data.output);
+         }, 150);
+      }
+    });
+
   }, [joined, roomId]);
 
   useEffect(() => {
@@ -131,6 +178,81 @@ const Room = () => {
       MessageBox.current.scrollTop = MessageBox.current.scrollHeight;
     }
   }, [messages]);
+
+  useEffect(() => {
+    if (terminalActive && terminalContainerRef.current) {
+      if (xtermRef.current) {
+        xtermRef.current.dispose();
+      }
+
+      const term = new Terminal({
+        theme: {
+          background: '#1e1e1e',
+          foreground: '#cccccc',
+          cursor: '#ffffff'
+        },
+        fontFamily: "'Fira Code', 'Cascadia Code', monospace",
+        fontSize: 14,
+        cursorBlink: true
+      });
+      xtermRef.current = term;
+
+      const fitAddon = new FitAddon();
+      fitAddonRef.current = fitAddon;
+      
+      term.loadAddon(fitAddon);
+      term.open(terminalContainerRef.current);
+      fitAddon.fit();
+
+      term.onData((data) => {
+        if (currentSessionIdRef.current) {
+          sendMessage('terminal:input', { sessionId: currentSessionIdRef.current, input: data });
+        }
+      });
+      
+      const resizeObserver = new ResizeObserver(() => {
+         if (fitAddonRef.current) fitAddonRef.current.fit();
+      });
+      resizeObserver.observe(terminalContainerRef.current);
+      
+      return () => {
+         resizeObserver.disconnect();
+         term.dispose();
+         xtermRef.current = null;
+         fitAddonRef.current = null;
+      };
+    }
+  }, [terminalActive]);
+
+  const runCode = async () => {
+    if (!editorCode.trim() || isExecuting) return;
+    
+    setIsExecuting(true);
+    setCompilationError(null);
+    if (xtermRef.current) {
+        xtermRef.current.clear();
+    }
+
+    try {
+      const res = await axiosInstance.post('/api/execution/run', {
+        roomId,
+        userId: user?._id || user?.userId,
+        language: editorLanguage,
+        sourceCode: editorCode
+      });
+      setCurrentSessionId(res.data.sessionId);
+    } catch (err) {
+      setCompilationError(err.response?.data?.error?.message || err.response?.data?.error || err.message);
+      setIsExecuting(false);
+    }
+  };
+
+  const handleCloseTerminal = () => {
+    setTerminalActive(false);
+    if (currentSessionId) {
+      axiosInstance.post('/api/execution/terminate', { sessionId: currentSessionId }).catch(console.error);
+    }
+  };
 
   const send = () => {
     if (!message.trim()) return;
@@ -378,6 +500,26 @@ const Room = () => {
           {/* Editor Header */}
           <div className="bg-[#252526] border-b border-[#3c3c3c] px-4 py-2.5 flex items-center justify-between">
             <div className="flex items-center gap-3">
+              <button 
+                onClick={runCode}
+                disabled={isExecuting}
+                className="flex items-center gap-1.5 px-4 py-1 bg-indigo-600 hover:bg-indigo-700 disabled:bg-indigo-800 disabled:opacity-50 text-white text-xs font-bold rounded-md transition-colors shadow-sm"
+              >
+                {isExecuting ? (
+                  <svg className="animate-spin h-3.5 w-3.5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                  </svg>
+                ) : (
+                  <svg xmlns="http://www.w3.org/2000/svg" className="h-3.5 w-3.5" viewBox="0 0 20 20" fill="currentColor">
+                    <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM9.555 7.168A1 1 0 008 8v4a1 1 0 001.555.832l3-2a1 1 0 000-1.664l-3-2z" clipRule="evenodd" />
+                  </svg>
+                )}
+                {isExecuting ? 'Running...' : 'Run'}
+              </button>
+              
+              <div className="h-4 w-px bg-[#3c3c3c]"></div>
+
               <div className="flex items-center gap-1.5">
                 <div className="w-3 h-3 rounded-full bg-emerald-500"></div>
                 <span className="text-[#cccccc] text-xs font-medium">Coding Session</span>
@@ -410,31 +552,53 @@ const Room = () => {
             )}
           </div>
 
-          {/* Monaco Editor */}
-          <div className="flex-1">
-            <Editor
-              height="100%"
-              language={editorLanguage}
-              value={editorCode}
-              onChange={(value) => setEditorCode(value || '')}
-              theme="vs-dark"
-              options={{
-                fontSize: 14,
-                fontFamily: "'Fira Code', 'Cascadia Code', 'JetBrains Mono', Consolas, monospace",
-                fontLigatures: true,
-                minimap: { enabled: true },
-                scrollBeyondLastLine: false,
-                wordWrap: 'on',
-                padding: { top: 16 },
-                lineNumbers: 'on',
-                renderLineHighlight: 'all',
-                smoothScrolling: true,
-                cursorBlinking: 'smooth',
-                cursorSmoothCaretAnimation: 'on',
-                bracketPairColorization: { enabled: true },
-                automaticLayout: true,
-              }}
-            />
+          {/* Monaco Editor & Terminal */}
+          <div className="flex-1 flex flex-col min-h-0">
+            <div className={`flex-1 min-h-0 relative`}>
+              <Editor
+                height="100%"
+                language={editorLanguage}
+                value={editorCode}
+                onChange={(value) => setEditorCode(value || '')}
+                theme="vs-dark"
+                options={{
+                  fontSize: 14,
+                  fontFamily: "'Fira Code', 'Cascadia Code', 'JetBrains Mono', Consolas, monospace",
+                  fontLigatures: true,
+                  minimap: { enabled: true },
+                  scrollBeyondLastLine: false,
+                  wordWrap: 'on',
+                  padding: { top: 16 },
+                  lineNumbers: 'on',
+                  renderLineHighlight: 'all',
+                  smoothScrolling: true,
+                  cursorBlinking: 'smooth',
+                  cursorSmoothCaretAnimation: 'on',
+                  bracketPairColorization: { enabled: true },
+                  automaticLayout: true,
+                }}
+              />
+            </div>
+            
+            {/* Terminal Section */}
+            {terminalActive && (
+              <div className="h-[280px] bg-[#1e1e1e] border-t border-[#3c3c3c] flex flex-col shrink-0 z-20 shadow-[0_-4px_10px_rgba(0,0,0,0.1)]">
+                <div className="bg-[#252526] px-4 py-1.5 flex justify-between items-center border-b border-[#3c3c3c]">
+                  <span className="text-[#cccccc] text-xs font-medium flex items-center gap-2">
+                    <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 text-indigo-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 9l3 3-3 3m5 0h3M4 15V9a2 2 0 012-2h12a2 2 0 012 2v6a2 2 0 01-2 2H6a2 2 0 01-2-2z" />
+                    </svg>
+                    Terminal
+                  </span>
+                  <button onClick={handleCloseTerminal} className="text-[#cccccc] hover:text-white transition-colors">
+                    <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                    </svg>
+                  </button>
+                </div>
+                <div className="flex-1 p-2 overflow-hidden bg-[#1e1e1e]" ref={terminalContainerRef}></div>
+              </div>
+            )}
           </div>
         </section>
       )}
@@ -654,6 +818,37 @@ const Room = () => {
             >
               Back to Home
             </button>
+          </div>
+        </div>
+      )}
+
+      {/* Compilation/Runtime Error Popup */}
+      {compilationError && (
+        <div className="fixed inset-0 flex items-center justify-center bg-black/50 backdrop-blur-sm z-[80]">
+          <div className="bg-[#1e1e1e] border border-[#3c3c3c] rounded-xl shadow-2xl w-full max-w-2xl overflow-hidden animate-slideIn mx-4">
+            <div className="bg-red-500/10 border-b border-red-500/20 px-5 py-4 flex items-center justify-between">
+              <div className="flex items-center gap-2.5 text-red-400">
+                <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                  <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clipRule="evenodd" />
+                </svg>
+                <span className="font-bold text-sm tracking-wide">Execution Error</span>
+              </div>
+              <button onClick={() => setCompilationError(null)} className="text-slate-400 hover:text-white transition-colors">
+                <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+            <div className="p-5 bg-[#1e1e1e] max-h-[60vh] overflow-auto [&::-webkit-scrollbar]:w-2 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:bg-[#3c3c3c] [&::-webkit-scrollbar-thumb]:rounded-full">
+              <pre className="text-red-400 font-mono text-sm whitespace-pre-wrap leading-relaxed">{
+                typeof compilationError === 'object' ? JSON.stringify(compilationError, null, 2) : compilationError
+              }</pre>
+            </div>
+            <div className="bg-[#252526] px-5 py-4 border-t border-[#3c3c3c] flex justify-end">
+              <button onClick={() => setCompilationError(null)} className="px-6 py-2 bg-[#3c3c3c] hover:bg-[#4c4c4c] text-white text-sm font-semibold rounded-lg transition-colors">
+                Dismiss
+              </button>
+            </div>
           </div>
         </div>
       )}
