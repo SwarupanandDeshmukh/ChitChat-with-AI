@@ -17,14 +17,7 @@
     <img src="https://img.shields.io/badge/Redis-DC382D?style=for-the-badge&logo=redis&logoColor=white" alt="Redis" />
     <img src="https://img.shields.io/badge/License-MIT-blue?style=for-the-badge" alt="License" />
   </p>
-
-  <p>
-    <a href="#-key-features">Features</a> •
-    <a href="#-architecture">Architecture</a> •
-    <a href="#-sequence-diagrams">Workflows</a> •
-    <a href="#-deployment">Deployment</a> •
-    <a href="#-design-decisions">Design</a>
-  </p>
+  
 </div>
 
 <br />
