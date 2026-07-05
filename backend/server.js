@@ -6,7 +6,7 @@ import connectDB from './db/db.js';
 import { Server } from 'socket.io';
 import jwt from 'jsonwebtoken';
 import Room from './models/RoomModel.js';
-import generateResult from './Services/AIService.js';
+import aiService from './Services/AIService.js';
 import redisClient from './Services/RedisService.js';
 
 
@@ -95,7 +95,7 @@ io.on('connection', socket => {
 
         const message = data.message;
 
-        const aiMessage = message.includes("@ai");
+        const aiMessage = message.trim().startsWith("@ai");
 
         // Store user message in Redis
         const messageData = JSON.stringify({
@@ -109,24 +109,41 @@ io.on('connection', socket => {
         socket.broadcast.to(roomId).emit('project-message', data)
 
         if (aiMessage) {
+            try {
+                const prompt = message.trim().slice(3); // Remove @ai
 
-            const prompt = message.replace('@ai', '');
+                const result = await aiService.processPrompt(prompt);
 
-            const result = await generateResult(prompt);
+                // Store AI response in Redis
+                const aiMessageData = JSON.stringify({
+                    sender: 'AI',
+                    message: result,
+                    timestamp: new Date().toISOString()
+                });
+                await redisClient.rPush(chatKey, aiMessageData);
+                await redisClient.expire(chatKey, 86400);
 
-            // Store AI response in Redis
-            const aiMessageData = JSON.stringify({
-                sender: 'AI',
-                message: result,
-                timestamp: new Date().toISOString()
-            });
-            await redisClient.rPush(chatKey, aiMessageData);
-            await redisClient.expire(chatKey, 86400);
+                io.to(roomId).emit('project-message', {
+                    message: result,
+                    sender: 'AI'
+                });
+            } catch (error) {
+                console.error("AI Handling Error:", error.message);
+                
+                const errorMessage = `AI Error: ${error.message || 'Unable to process request'}`;
+                const errorData = JSON.stringify({
+                    sender: 'AI',
+                    message: errorMessage,
+                    timestamp: new Date().toISOString()
+                });
+                await redisClient.rPush(chatKey, errorData);
+                await redisClient.expire(chatKey, 86400);
 
-            io.to(roomId).emit('project-message', {
-                message: result,
-                sender: 'AI'
-            });
+                io.to(roomId).emit('project-message', {
+                    message: errorMessage,
+                    sender: 'AI'
+                });
+            }
 
             return;
         }

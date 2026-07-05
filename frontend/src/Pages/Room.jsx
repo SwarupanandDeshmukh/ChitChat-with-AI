@@ -7,6 +7,7 @@ import Editor from '@monaco-editor/react';
 import { Terminal } from 'xterm';
 import { FitAddon } from 'xterm-addon-fit';
 import 'xterm/css/xterm.css';
+import Markdown from 'react-markdown';
 
 const LANGUAGES = [
   { label: 'JavaScript', value: 'javascript' },
@@ -460,8 +461,8 @@ const Room = () => {
               </span>
 
               {msg.type === 'ai' ? (
-                <div className='text-sm whitespace-pre-wrap break-words'>
-                  {ConvertString(msg.message)}
+                <div className='text-sm markdown-body break-words'>
+                  <Markdown>{ConvertString(msg.message)}</Markdown>
                 </div>
               ) : (
                 <span className="text-sm whitespace-pre-wrap break-words">{msg.message}</span>
